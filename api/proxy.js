@@ -77,7 +77,8 @@ export default async function handler(req, res) {
   if (target === 'cams') {
     const { address } = params;
     if (!address) return res.status(400).json({ error: 'Missing address' });
-    const url = `https://geocode.gis.lacounty.gov/geocode/rest/services/CAMS_Locator/GeocodeServer/findAddressCandidates?SingleLine=${encodeURIComponent(address)}&outFields=*&maxLocations=1&f=json`;
+    // outSR=4326 forces WGS84 lat/lng output — directly usable for parcel queries
+    const url = `https://geocode.gis.lacounty.gov/geocode/rest/services/CAMS_Locator/GeocodeServer/findAddressCandidates?SingleLine=${encodeURIComponent(address)}&outFields=*&maxLocations=1&outSR=4326&f=json`;
     const data = await fetchOne(url);
     if (!data) return res.status(502).json({ error: 'CAMS geocoder unavailable' });
     res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
@@ -86,42 +87,53 @@ export default async function handler(req, res) {
 
   // ── LA COUNTY parcel lookup ──
   if (target === 'lacounty') {
-    const { lat, lng, x: mx, y: my, address } = params;
+    const { lat, lng, address } = params;
 
-    // Strategy 1: Identify on tiled cache using Web Mercator coords
-    // (tiled cache only supports Identify, not query)
-    // Use CAMS coords (Web Mercator) if available, else convert from WGS84
-    if (mx && my) {
-      const extent = `${parseFloat(mx)-50},${parseFloat(my)-50},${parseFloat(mx)+50},${parseFloat(my)+50}`;
-      const url = `https://public.gis.lacounty.gov/public/rest/services/LACounty_Cache/LACounty_Parcel/MapServer/identify?geometry=${mx},${my}&geometryType=esriGeometryPoint&sr=3857&layers=all:0&tolerance=2&mapExtent=${extent}&imageDisplay=800,800,96&returnGeometry=false&f=json`;
-      const data = await fetchOne(url);
-      if (data?.results?.length > 0) {
-        const normalized = { features: data.results.map(r => ({ attributes: r.attributes })) };
-        res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
-        return res.status(200).json(normalized);
-      }
-    }
+    const AGOL_FS = 'https://services3.arcgis.com/GVgbJbqm8hXASVYi/arcgis/rest/services/LA_County_Parcels/FeatureServer/0';
+    const agolFields = 'AIN,SitusFullAddress,SitusCity,SitusZIP,YearBuilt1,SQFTmain1,Bedrooms1,Bathrooms1,Units1,UseType,UseCode,Roll_LandBaseYear,Roll_ImpBaseYear,CENTER_LAT,CENTER_LON';
 
-    // Strategy 2: ArcGIS Online public LA County parcel FeatureServer
-    // (fully queryable, supports spatial + WHERE queries)
-    const AGOL_FS = 'https://services3.arcgis.com/i2dkYWmb4wHvYPda/arcgis/rest/services/LACounty_Parcels/FeatureServer/0';
-
-    if (lat && lng) {
-      const url = `${AGOL_FS}/query?geometry=${lng},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=${fields}&returnGeometry=false&f=json`;
-      const data = await fetchOne(url);
-      if (data?.features?.length > 0) {
-        res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
-        return res.status(200).json(data);
-      }
-    }
-
-    // Strategy 3: WHERE clause by address on AGOL FeatureServer
+    // Strategy 1: WHERE clause by address — most reliable for fire lots
     if (address) {
       const situsAddr = address.toUpperCase()
         .replace(/,.*$/, '')
         .replace(/\s+(APT|UNIT|STE|#)\s*\S+/i, '')
         .trim();
-      const url = `${AGOL_FS}/query?where=SitusFullAddress+LIKE+'${encodeURIComponent(situsAddr + '%')}'&outFields=${fields}&returnGeometry=false&f=json`;
+
+      // Extract city if present to narrow results
+      const cityMatch = address.match(/,\s*([^,]+),\s*CA/i);
+      const city = cityMatch ? cityMatch[1].trim().toUpperCase() : null;
+
+      const whereClause = city
+        ? `SitusFullAddress LIKE '${situsAddr}%' AND SitusCity LIKE '${city}%'`
+        : `SitusFullAddress LIKE '${situsAddr}%'`;
+
+      const url = `${AGOL_FS}/query?where=${encodeURIComponent(whereClause)}&outFields=${agolFields}&returnGeometry=false&resultRecordCount=6&f=json`;
+      const data = await fetchOne(url);
+      if (data?.features?.length > 0) {
+        res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
+        return res.status(200).json(data);
+      }
+
+      // Retry: strip cardinal direction (N/S/E/W) in case user omitted it
+      // e.g. "437 MENDOCINO ST" should still match "437 W MENDOCINO ST"
+      // Only do this if the first query returned nothing — avoids over-fetching
+      const stripped = situsAddr.replace(/^(\d+)\s+[NSEW]\s+/, '$1 ');
+      if (stripped !== situsAddr) {
+        const whereStripped = city
+          ? `SitusFullAddress LIKE '${stripped}%' AND SitusCity LIKE '${city}%'`
+          : `SitusFullAddress LIKE '${stripped}%'`;
+        const url2 = `${AGOL_FS}/query?where=${encodeURIComponent(whereStripped)}&outFields=${agolFields}&returnGeometry=false&resultRecordCount=6&f=json`;
+        const data2 = await fetchOne(url2);
+        if (data2?.features?.length > 0) {
+          res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
+          return res.status(200).json(data2);
+        }
+      }
+    }
+
+    // Strategy 2: Spatial query by coordinates
+    if (lat && lng) {
+      const url = `${AGOL_FS}/query?geometry=${lng},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=${agolFields}&returnGeometry=false&f=json`;
       const data = await fetchOne(url);
       if (data?.features?.length > 0) {
         res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
@@ -130,17 +142,6 @@ export default async function handler(req, res) {
     }
 
     return res.status(200).json({ features: [] });
-  }
-
-  // ── LA CITY zoning ──
-  if (target === 'lacity') {
-    const { lat, lng } = params;
-    if (!lat || !lng) return res.status(400).json({ error: 'Missing lat/lng' });
-    const url = `https://gis.lacity.org/arcgis/rest/services/Map_Services/LADBS_Zoning/MapServer/0/query?geometry=${lng},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=APN,ADDRESS,ZONE_CLASS,ZONE_SUMMARY,LOTAREA&returnGeometry=false&f=json`;
-    const data = await fetchOne(url);
-    if (!data) return res.status(200).json({ features: [] });
-    res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
-    return res.status(200).json(data);
   }
 }
 
