@@ -45,10 +45,11 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Invalid target. Must be: census, lacounty, or lacity' });
   }
 
+  // Fields on the new LACounty_Parcel endpoint use "1" suffix for building data
   const fields = [
-    'AIN','SitusFullAddress','SitusCityName',
-    'YearBuilt','SQFTmain','SQFTlot',
-    'Bedrooms','Bathrooms','Units',
+    'AIN','SitusFullAddress','SitusCityName','SitusZIP',
+    'YearBuilt1','SQFTmain1','SQFTlot',
+    'Bedrooms1','Bathrooms1','Units1',
     'ZoningCode','AssessedValue',
     'FrontFeetLot','DepthFeetLot',
     'RecordingDate','SalePrice'
