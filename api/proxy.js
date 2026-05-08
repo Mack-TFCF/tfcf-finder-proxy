@@ -90,7 +90,7 @@ export default async function handler(req, res) {
     const { lat, lng, address } = params;
 
     const AGOL_FS = 'https://services3.arcgis.com/GVgbJbqm8hXASVYi/arcgis/rest/services/LA_County_Parcels/FeatureServer/0';
-    const agolFields = 'AIN,SitusFullAddress,SitusCity,SitusZIP,YearBuilt1,SQFTmain1,Bedrooms1,Bathrooms1,Units1,UseType,UseCode,Roll_LandBaseYear,Roll_ImpBaseYear,CENTER_LAT,CENTER_LON';
+    const agolFields = 'AIN,SitusFullAddress,SitusCity,SitusZIP,YearBuilt1,SQFTmain1,Bedrooms1,Bathrooms1,Units1,UseType,UseCode,Roll_LandBaseYear,Roll_ImpBaseYear,CENTER_LAT,CENTER_LON,Shape__Area,Shape__Length';
 
     // Strategy 1: WHERE clause by address — most reliable for fire lots
     if (address) {
