@@ -73,7 +73,7 @@ export default async function handler(req, res) {
       // Strategy 1: coordinate-based spatial query
       if (lat && lng) {
         urls.push(
-          `https://arcgis.gis.lacounty.gov/arcgis/rest/services/assessor/Assessor_Parcels_Data/MapServer/0/query?geometry=${lng},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=${fields}&returnGeometry=false&f=json`
+          `https://public.gis.lacounty.gov/public/rest/services/LACounty_Cache/LACounty_Parcel/MapServer/0/query?geometry=${lng},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=${fields}&returnGeometry=false&f=json`
         );
       }
 
@@ -85,7 +85,7 @@ export default async function handler(req, res) {
           .replace(/\s+(APT|UNIT|STE|#)\s*\S+/i, '')  // remove unit numbers
           .trim();
         urls.push(
-          `https://arcgis.gis.lacounty.gov/arcgis/rest/services/assessor/Assessor_Parcels_Data/MapServer/0/query?where=SitusFullAddress+LIKE+'${encodeURIComponent(situsAddr + '%')}'&outFields=${fields}&returnGeometry=false&f=json`
+          `https://public.gis.lacounty.gov/public/rest/services/LACounty_Cache/LACounty_Parcel/MapServer/0/query?where=SitusFullAddress+LIKE+'${encodeURIComponent(situsAddr + '%')}'&outFields=${fields}&returnGeometry=false&f=json`
         );
       }
 
