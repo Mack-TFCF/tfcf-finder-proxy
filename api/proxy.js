@@ -71,22 +71,33 @@ export default async function handler(req, res) {
     else if (target === 'lacounty') {
       const { lat, lng, address } = params;
 
-      // Strategy 1: coordinate-based spatial query
+      // LACounty_Parcel is a tiled cache — it doesn't support /query
+      // It supports /identify which finds features at a point
       if (lat && lng) {
+        // Convert WGS84 lat/lng to Web Mercator (EPSG:3857) for this service
+        const x = parseFloat(lng) * 20037508.34 / 180;
+        const latRad = parseFloat(lat) * Math.PI / 180;
+        const y = Math.log(Math.tan((90 + parseFloat(lat)) * Math.PI / 360)) / (Math.PI / 180) * 20037508.34 / 180;
+
+        // Strategy 1: Identify at point (works on tiled cache services)
         urls.push(
-          `https://public.gis.lacounty.gov/public/rest/services/LACounty_Cache/LACounty_Parcel/MapServer/0/query?geometry=${lng},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=${fields}&returnGeometry=false&f=json`
+          `https://public.gis.lacounty.gov/public/rest/services/LACounty_Cache/LACounty_Parcel/MapServer/identify?geometry=${x},${y}&geometryType=esriGeometryPoint&sr=3857&layers=all:0&tolerance=2&mapExtent=${x-100},${y-100},${x+100},${y+100}&imageDisplay=800,800,96&returnGeometry=false&f=json`
+        );
+
+        // Strategy 2: Try the assessor's own queryable FeatureServer
+        urls.push(
+          `https://assessor.gis.lacounty.gov/assessor/rest/services/Assessor_OpenData/Assessor_OpenData_View/FeatureServer/0/query?geometry=${lng},${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=${fields}&returnGeometry=false&f=json`
         );
       }
 
-      // Strategy 2: address string WHERE clause query (more reliable)
-      // Normalise the situs address: uppercase, strip unit/apt, keep number + street
+      // Strategy 3: WHERE clause on the assessor FeatureServer by address
       if (address) {
         const situsAddr = address.toUpperCase()
-          .replace(/,.*$/, '')      // remove everything after first comma
-          .replace(/\s+(APT|UNIT|STE|#)\s*\S+/i, '')  // remove unit numbers
+          .replace(/,.*$/, '')
+          .replace(/\s+(APT|UNIT|STE|#)\s*\S+/i, '')
           .trim();
         urls.push(
-          `https://public.gis.lacounty.gov/public/rest/services/LACounty_Cache/LACounty_Parcel/MapServer/0/query?where=SitusFullAddress+LIKE+'${encodeURIComponent(situsAddr + '%')}'&outFields=${fields}&returnGeometry=false&f=json`
+          `https://assessor.gis.lacounty.gov/assessor/rest/services/Assessor_OpenData/Assessor_OpenData_View/FeatureServer/0/query?where=SitusFullAddress+LIKE+'${encodeURIComponent(situsAddr + '%')}'&outFields=${fields}&returnGeometry=false&f=json`
         );
       }
 
@@ -102,7 +113,7 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Failed to build upstream URL' });
   }
 
-  // ── Fetch from upstream — try each URL until one returns features ──
+  // ── Fetch from upstream — try each URL until one returns data ──
   for (const upstreamUrl of urls) {
     try {
       const controller = new AbortController();
@@ -118,13 +129,25 @@ export default async function handler(req, res) {
 
       const data = await upstream.json();
 
-      // If this is a feature query, only return if we got results
+      // Identify operation returns { results: [...] }
+      // Normalize it to { features: [...] } so client code is uniform
+      if (data.results !== undefined) {
+        if (data.results.length > 0) {
+          const normalized = {
+            features: data.results.map(r => ({ attributes: r.attributes }))
+          };
+          res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
+          return res.status(200).json(normalized);
+        }
+        continue;
+      }
+
+      // Feature query returns { features: [...] }
       if (data.features !== undefined) {
         if (data.features.length > 0) {
           res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
           return res.status(200).json(data);
         }
-        // No features — try next URL
         continue;
       }
 
@@ -138,6 +161,5 @@ export default async function handler(req, res) {
     }
   }
 
-  // All strategies exhausted — return empty features so client can handle gracefully
   return res.status(200).json({ features: [] });
 }
