@@ -10,6 +10,7 @@ export default async function handler(req, res) {
   const allowedOrigins = [
     'https://www.foothillcatalog.org',
     'https://foothillcatalog.org',
+    'https://stingray-chameleon-tcpt.squarespace.com',
     'http://localhost:3000',
     'http://localhost:8080',
   ];
