@@ -32,6 +32,12 @@ export default async function handler(req, res) {
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
+  // Honor Cache-Control: no-cache from client — bypass edge cache
+  const noCache = req.headers['cache-control'] === 'no-cache';
+  const cacheHeader = noCache
+    ? 'no-store'
+    : 's-maxage=3600, stale-while-revalidate=86400';
+
   const target = req.method === 'POST'
     ? (req.body?.target || '')
     : (req.query?.target || '');
@@ -81,7 +87,7 @@ export default async function handler(req, res) {
     const url = `https://geocode.gis.lacounty.gov/geocode/rest/services/CAMS_Locator/GeocodeServer/findAddressCandidates?SingleLine=${encodeURIComponent(address)}&outFields=Loc_name,Score,Match_addr&maxLocations=1&outSR=4326&f=json`;
     const data = await fetchOne(url);
     if (!data) return res.status(502).json({ error: 'CAMS geocoder unavailable' });
-    res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
+    res.setHeader('Cache-Control', cacheHeader);
     return res.status(200).json(data);
   }
 
@@ -92,7 +98,7 @@ export default async function handler(req, res) {
     const url = `https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?address=${encodeURIComponent(address)}&benchmark=Public_AR_Current&format=json`;
     const data = await fetchOne(url);
     if (!data) return res.status(502).json({ error: 'Census geocoder unavailable' });
-    res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
+    res.setHeader('Cache-Control', cacheHeader);
     return res.status(200).json(data);
   }
 
@@ -121,7 +127,7 @@ export default async function handler(req, res) {
       const url = `${AGOL_FS}/query?where=${encodeURIComponent(whereClause)}&outFields=${agolFields}&returnGeometry=true&outSR=4326&resultRecordCount=6&f=json`;
       const data = await fetchOne(url);
       if (data?.features?.length > 0) {
-        res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+        res.setHeader('Cache-Control', cacheHeader);
         return res.status(200).json(data);
       }
 
@@ -133,7 +139,7 @@ export default async function handler(req, res) {
         const url2 = `${AGOL_FS}/query?where=${encodeURIComponent(whereStripped)}&outFields=${agolFields}&returnGeometry=true&outSR=4326&resultRecordCount=6&f=json`;
         const data2 = await fetchOne(url2);
         if (data2?.features?.length > 0) {
-          res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+          res.setHeader('Cache-Control', cacheHeader);
           return res.status(200).json(data2);
         }
       }
@@ -147,7 +153,7 @@ export default async function handler(req, res) {
       const url = `${AGOL_FS}/query?geometry=${safeLng},${safeLat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=${agolFields}&returnGeometry=true&outSR=4326&f=json`;
       const data = await fetchOne(url);
       if (data?.features?.length > 0) {
-        res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
+        res.setHeader('Cache-Control', cacheHeader);
         return res.status(200).json(data);
       }
     }
