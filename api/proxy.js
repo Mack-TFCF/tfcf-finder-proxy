@@ -121,11 +121,10 @@ export default async function handler(req, res) {
       const url = `${AGOL_FS}/query?where=${encodeURIComponent(whereClause)}&outFields=${agolFields}&returnGeometry=true&outSR=4326&resultRecordCount=6&f=json`;
       const data = await fetchOne(url);
       if (data?.features?.length > 0) {
-        res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
+        res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
         return res.status(200).json(data);
       }
 
-      // Retry: strip cardinal direction in case user omitted it
       const stripped = sanitizeForSQL(situsAddr.replace(/^(\d+)\s+[NSEW]\s+/, '$1 '));
       if (stripped !== situsAddr) {
         const whereStripped = city
@@ -134,7 +133,7 @@ export default async function handler(req, res) {
         const url2 = `${AGOL_FS}/query?where=${encodeURIComponent(whereStripped)}&outFields=${agolFields}&returnGeometry=true&outSR=4326&resultRecordCount=6&f=json`;
         const data2 = await fetchOne(url2);
         if (data2?.features?.length > 0) {
-          res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
+          res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
           return res.status(200).json(data2);
         }
       }
@@ -148,7 +147,7 @@ export default async function handler(req, res) {
       const url = `${AGOL_FS}/query?geometry=${safeLng},${safeLat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=${agolFields}&returnGeometry=true&outSR=4326&f=json`;
       const data = await fetchOne(url);
       if (data?.features?.length > 0) {
-        res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
+        res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=86400');
         return res.status(200).json(data);
       }
     }
