@@ -165,41 +165,64 @@ export default async function handler(req, res) {
   }
 
   // ── Claude API — key lives only on the server, never sent to browser ──
-  if (target === 'claude') {
-    if (req.method !== 'POST') return res.status(405).json({ error: 'POST required' });
+if (target === 'claude') {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'POST required' });
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return res.status(503).json({ error: 'AI narratives not configured' });
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(503).json({ error: 'AI narratives not configured' });
 
-    const { prompt, max_tokens = 200 } = req.body || {};
-    if (!prompt || typeof prompt !== 'string') return res.status(400).json({ error: 'Missing prompt' });
-    if (prompt.length > 2000) return res.status(400).json({ error: 'Prompt too long' });
+  const { prompt, messages, max_tokens = 200 } = req.body || {};
 
-    const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 20000);
+  // Support two call shapes:
+  //   1. Simple prompt string: { prompt: "...", max_tokens }
+  //      Used by fetchNarrative() and fetchPlanNarrative()
+  //   2. Messages array with document blocks: { messages: [...], max_tokens }
+  //      Used by handleVerifyUpload() (PDF reading)
+  let apiMessages;
+  if (messages && Array.isArray(messages)) {
+    // Shape 2 — messages array (may include document content blocks)
+    apiMessages = messages;
+  } else if (prompt && typeof prompt === 'string') {
+    // Shape 1 — simple prompt string
+    if (prompt.length > 4000) return res.status(400).json({ error: 'Prompt too long' });
+    apiMessages = [{ role: 'user', content: prompt }];
+  } else {
+    return res.status(400).json({ error: 'Missing prompt or messages' });
+  }
 
-    try {
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001', // fast + cheap for short narratives
-          max_tokens,
-          messages: [{ role: 'user', content: prompt }],
-        }),
-      });
-      clearTimeout(tid);
-      if (!r.ok) return res.status(502).json({ error: 'Claude API error' });
-      const data = await r.json();
-      return res.status(200).json({ text: data.content?.[0]?.text || '' });
-    } catch(e) {
-      clearTimeout(tid);
-      return res.status(504).json({ error: 'Claude API timed out' });
-    }
+  // Model selection — use Sonnet for document reading (PDFs need stronger extraction),
+  // Haiku is fine for short narrative strings
+  const hasDocumentBlock = apiMessages.some(m =>
+    Array.isArray(m.content) && m.content.some(b => b.type === 'document')
+  );
+  const model = hasDocumentBlock
+    ? 'claude-sonnet-4-6'              // document reading
+    : 'claude-haiku-4-5-20251001';     // fast narratives
+
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), 30000); // longer timeout for PDF reads
+
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens,
+        messages: apiMessages,
+      }),
+    });
+    clearTimeout(tid);
+    if (!r.ok) return res.status(502).json({ error: 'Claude API error' });
+    const data = await r.json();
+    return res.status(200).json({ text: data.content?.[0]?.text || '' });
+  } catch (e) {
+    clearTimeout(tid);
+    return res.status(504).json({ error: 'Claude API timed out' });
   }
 }
