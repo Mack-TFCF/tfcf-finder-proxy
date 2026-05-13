@@ -226,3 +226,4 @@ if (target === 'claude') {
     return res.status(504).json({ error: 'Claude API timed out' });
   }
 }
+}
